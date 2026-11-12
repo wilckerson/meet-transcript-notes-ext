@@ -1,6 +1,6 @@
 {
   "name": "meet-transcript-notes",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Chrome MV3 extension that transcribes Google Meet calls locally with Whisper large-v3-turbo.",
   "type": "module",

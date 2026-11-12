@@ -102,6 +102,14 @@ async function ensureStateInitialized(): Promise<void> {
 
       await updateBadge(state);
       await pruneSavedSessions(SEVEN_DAYS_MS);
+
+      if (state.lastSavedSessionId) {
+        const existing = await getSession(state.lastSavedSessionId);
+        if (!existing) {
+          state.lastSavedSessionId = undefined;
+          await saveRecorderState(state);
+        }
+      }
     })();
   }
   await stateReadyPromise;
@@ -179,6 +187,7 @@ async function handleStart(
   await setState({
     status: 'starting',
     sessionId,
+    lastSavedSessionId: undefined,
     tabId: req.tabId,
     startedAt,
     language,
@@ -276,16 +285,33 @@ async function finalizeAndSaveSession(sessionId: string): Promise<void> {
   currentRemoteParticipants = [];
   currentSelfName = undefined;
 
-  // Clear active session state immediately so the popup preview resets right away,
-  // even while the user is choosing a file location in the Save As dialog.
+  // Transition to idle while keeping lastSavedSessionId so the popup keeps the transcript
+  // in the preview and allows re-downloading if the user cancels the Save As dialog.
   await setState({
     ...DEFAULT_STATE,
     language: settings.defaultLanguage,
+    lastSavedSessionId: sessionId,
     recoverableSessionId:
       state.recoverableSessionId === sessionId ? undefined : state.recoverableSessionId,
   });
 
   await triggerMarkdownDownload(markdown, filename);
+}
+
+async function handleDownloadSession(sessionId: string): Promise<OkResponse> {
+  const sessionMeta = await getSession(sessionId);
+  if (!sessionMeta) {
+    if (state.lastSavedSessionId === sessionId) {
+      await setState({ lastSavedSessionId: undefined });
+    }
+    return { ok: false, error: 'Transcript session is no longer available.' };
+  }
+
+  const [segments, settings] = await Promise.all([getSegments(sessionId), getSettings()]);
+  const markdown = buildMarkdownTranscript(sessionMeta, segments, settings.timestampStyle);
+  const filename = formatFilename(settings.filenameTemplate, sessionMeta);
+  await triggerMarkdownDownload(markdown, filename);
+  return { ok: true };
 }
 
 async function triggerMarkdownDownload(markdown: string, filename: string): Promise<void> {
@@ -298,11 +324,15 @@ async function triggerMarkdownDownload(markdown: string, filename: string): Prom
   }
   const dataUrl = `data:text/markdown;charset=utf-8;base64,${btoa(binary)}`;
 
-  await chrome.downloads.download({
-    url: dataUrl,
-    filename,
-    saveAs: true,
-  });
+  try {
+    await chrome.downloads.download({
+      url: dataUrl,
+      filename,
+      saveAs: true,
+    });
+  } catch {
+    // Ignore errors when the user cancels the Save As file chooser dialog.
+  }
 }
 
 async function handleOffscreenEvent(evt: OffscreenEvent): Promise<void> {
@@ -488,7 +518,8 @@ chrome.runtime.onMessage.addListener(
 
       switch (msg.type) {
         case 'GET_STATE': {
-          const segments = state.sessionId ? await getSegments(state.sessionId) : [];
+          const previewSessionId = state.sessionId ?? state.lastSavedSessionId;
+          const segments = previewSessionId ? await getSegments(previewSessionId) : [];
           sendResponse({ state, segments } satisfies GetStateResponse);
           return;
         }
@@ -548,6 +579,12 @@ chrome.runtime.onMessage.addListener(
                 : state.recoverableSessionId,
           });
           sendResponse({ ok: true } satisfies OkResponse);
+          return;
+        }
+
+        case 'DOWNLOAD_SESSION': {
+          const res = await handleDownloadSession(msg.sessionId);
+          sendResponse(res);
           return;
         }
 

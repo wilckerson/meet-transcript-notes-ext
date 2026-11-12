@@ -95,7 +95,9 @@ function PopupApp() {
       if (!msg || msg.target !== 'ui') return;
       if (msg.type === 'STATE') {
         setState((prev) => {
-          if (msg.state.status === 'idle' || msg.state.sessionId !== prev.sessionId) {
+          const prevPreviewId = prev.sessionId ?? prev.lastSavedSessionId;
+          const nextPreviewId = msg.state.sessionId ?? msg.state.lastSavedSessionId;
+          if (!nextPreviewId || nextPreviewId !== prevPreviewId) {
             setSegments([]);
           }
           return msg.state;
@@ -255,6 +257,24 @@ function PopupApp() {
     }
   };
 
+  const handleDownloadSaved = async () => {
+    if (!state.lastSavedSessionId) return;
+    setBusy(true);
+    setLocalError(undefined);
+    try {
+      const res = await sendSafe<OkResponse>({
+        target: 'background',
+        type: 'DOWNLOAD_SESSION',
+        sessionId: state.lastSavedSessionId,
+      });
+      if (res && !res.ok) {
+        setLocalError(res.error ?? 'Could not download transcript');
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const elapsedSeconds =
     state.startedAt && isActive ? Math.max(0, Math.floor((now - state.startedAt) / 1000)) : 0;
 
@@ -262,11 +282,13 @@ function PopupApp() {
   const selectedLanguage = isActive
     ? state.language
     : (settings?.defaultLanguage ?? state.language ?? 'auto');
+  const rawVersion = chrome.runtime?.getManifest?.()?.version ?? '0.2.0';
+  const displayVersion = rawVersion.replace(/\.0$/, '');
 
   return (
     <>
       <div class="popup-header">
-        <h1 class="popup-title">Meet Transcript Notes</h1>
+        <h1 class="popup-title">Meet Transcript Notes v{displayVersion}</h1>
         <button type="button" class="link-btn" onClick={openSetup}>
           Setup &amp; Settings
         </button>
@@ -474,7 +496,9 @@ function PopupApp() {
           <div class="empty-hint">
             {isActive
               ? 'Listening to Meet tab + your microphone… Speech segments will appear here every ~10–25 s.'
-              : 'Transcript preview will appear here during the call. Remember to let participants know you are taking local notes.'}
+              : state.lastSavedSessionId
+                ? 'Recording stopped (no speech detected). You can still download the Markdown file or start a new transcription.'
+                : 'Transcript preview will appear here during the call. Remember to let participants know you are taking local notes.'}
           </div>
         ) : (
           segments.slice(-80).map((seg, idx) => (
@@ -498,9 +522,26 @@ function PopupApp() {
 
       {/* Primary action button */}
       {!isActive ? (
-        <button type="button" class="btn btn-primary btn-block" disabled={!canStart} onClick={handleStart}>
-          Start transcription (Meet + Mic)
-        </button>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          {state.lastSavedSessionId && (
+            <button
+              type="button"
+              class="btn btn-block"
+              disabled={busy}
+              onClick={handleDownloadSaved}
+            >
+              Download transcript (.md)
+            </button>
+          )}
+          <button
+            type="button"
+            class="btn btn-primary btn-block"
+            disabled={!canStart}
+            onClick={handleStart}
+          >
+            Start transcription (Meet + Mic)
+          </button>
+        </div>
       ) : (
         <button
           type="button"

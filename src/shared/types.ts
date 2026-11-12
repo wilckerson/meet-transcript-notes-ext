@@ -103,6 +103,8 @@ export interface RecorderState {
   errorAction?: 'open-setup' | 'none';
   /** Session that was interrupted by a crash and can still be saved. */
   recoverableSessionId?: string;
+  /** Most recently completed session kept in the preview so the user can re-download it. */
+  lastSavedSessionId?: string;
   /** Model loading progress while starting, 0..1. */
   loadProgress?: number;
   /** Non-self participant names detected in the Google Meet DOM (for live popup status badge). */

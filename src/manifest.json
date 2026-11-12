@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Meet Transcript Notes",
   "description": "Transcribe Google Meet calls locally with Whisper large-v3-turbo. No audio or text leaves your device.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "minimum_chrome_version": "116",
   "permissions": ["tabCapture", "offscreen", "storage", "unlimitedStorage", "downloads"],
   "host_permissions": [

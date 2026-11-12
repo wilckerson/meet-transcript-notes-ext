@@ -26,6 +26,7 @@ export type BackgroundRequest =
   | { target: 'background'; type: 'SET_LANGUAGE'; language: string }
   | { target: 'background'; type: 'SAVE_RECOVERED'; sessionId: string }
   | { target: 'background'; type: 'DISCARD_RECOVERED'; sessionId: string }
+  | { target: 'background'; type: 'DOWNLOAD_SESSION'; sessionId: string }
   | { target: 'background'; type: 'DISMISS_ERROR' }
   | {
       target: 'background';
