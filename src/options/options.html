@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Meet Transcript Notes — Setup &amp; Settings</title>
+    <link rel="stylesheet" href="../shared/styles.css" />
+    <style>
+      body {
+        max-width: 780px;
+        margin: 0 auto;
+        padding: 28px 20px 60px;
+      }
+      .page-header {
+        margin-bottom: 20px;
+      }
+      .page-title {
+        font-size: 22px;
+        font-weight: 700;
+        margin: 0 0 6px;
+      }
+      .page-subtitle {
+        color: var(--text-muted);
+        margin: 0;
+      }
+      .card {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--bg-elevated);
+        padding: 18px 20px;
+        margin-bottom: 16px;
+      }
+      .card-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 10px;
+      }
+      .card-title {
+        font-size: 15px;
+        font-weight: 700;
+        margin: 0;
+      }
+      .check-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin: 10px 0;
+      }
+      .check-item {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 8px 10px;
+        border-radius: 6px;
+        background: var(--bg-subtle);
+        border: 1px solid var(--border);
+      }
+      .check-icon {
+        font-size: 14px;
+        line-height: 1.2;
+      }
+      .check-body {
+        flex: 1;
+      }
+      .check-label {
+        font-weight: 600;
+      }
+      .check-detail {
+        color: var(--text-muted);
+        font-size: 12px;
+      }
+      .form-row {
+        margin-bottom: 14px;
+      }
+      .form-label {
+        display: block;
+        font-weight: 600;
+        margin-bottom: 4px;
+      }
+      .form-help {
+        color: var(--text-muted);
+        font-size: 12px;
+        margin-top: 3px;
+      }
+      .input,
+      .select {
+        width: 100%;
+        padding: 7px 10px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: var(--bg);
+        color: var(--text);
+        font: inherit;
+      }
+      .btn-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="./Options.tsx"></script>
+  </body>
+</html>
+

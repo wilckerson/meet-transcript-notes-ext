@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Meet Transcript Notes</title>
+    <link rel="stylesheet" href="../shared/styles.css" />
+    <style>
+      body {
+        width: 370px;
+        min-height: 430px;
+        padding: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .popup-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .popup-title {
+        font-size: 14px;
+        font-weight: 700;
+        margin: 0;
+      }
+      .popup-meta {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+      .field-label {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--text-muted);
+        margin-bottom: 4px;
+        display: block;
+      }
+      .preview-box {
+        flex: 1;
+        min-height: 170px;
+        max-height: 220px;
+        overflow-y: auto;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--bg-subtle);
+        padding: 8px 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .seg-row {
+        font-size: 12px;
+        line-height: 1.4;
+      }
+      .seg-ts {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 11px;
+        color: var(--text-muted);
+        margin-right: 6px;
+      }
+      .empty-hint {
+        color: var(--text-muted);
+        font-size: 12px;
+        margin: auto;
+        text-align: center;
+        padding: 12px;
+      }
+      .timer-pill {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-weight: 700;
+        font-size: 12px;
+      }
+      .rec-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #d93025;
+        display: inline-block;
+      }
+      .link-btn {
+        background: none;
+        border: none;
+        color: var(--primary);
+        padding: 0;
+        font-size: 12px;
+        text-decoration: underline;
+      }
+      .footer-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-size: 11px;
+        color: var(--text-muted);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="./Popup.tsx"></script>
+  </body>
+</html>
+
