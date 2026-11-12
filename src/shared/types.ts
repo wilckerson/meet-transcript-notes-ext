@@ -105,6 +105,10 @@ export interface RecorderState {
   recoverableSessionId?: string;
   /** Model loading progress while starting, 0..1. */
   loadProgress?: number;
+  /** Non-self participant names detected in the Google Meet DOM (for live popup status badge). */
+  detectedParticipants?: string[];
+  /** Currently active speaker names detected in the Google Meet DOM. */
+  activeDomSpeakers?: string[];
 }
 
 export const DEFAULT_STATE: RecorderState = {
@@ -118,5 +122,17 @@ export interface MeetingInfo {
   title: string;
   url: string;
   code?: string;
+}
+
+/** Snapshot of participants & active speakers reported by the Google Meet content script. */
+export interface SpeakerSnapshot {
+  /** Wall-clock epoch ms of the snapshot. */
+  timestampMs: number;
+  /** Non-self participants currently showing an active speaking indicator in Meet's DOM. */
+  activeSpeakers: string[];
+  /** All non-self remote participants currently visible in the call. */
+  remoteParticipants: string[];
+  /** Total participant tiles found in the DOM (including self). */
+  totalTiles?: number;
 }
 

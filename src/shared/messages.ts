@@ -7,6 +7,7 @@ import type {
   RecorderState,
   Segment,
   SpeakerEvent,
+  SpeakerSnapshot,
 } from './types';
 
 // ---- Popup / UI / Content → Service worker ---------------------------------------------------
@@ -26,7 +27,12 @@ export type BackgroundRequest =
   | { target: 'background'; type: 'SAVE_RECOVERED'; sessionId: string }
   | { target: 'background'; type: 'DISCARD_RECOVERED'; sessionId: string }
   | { target: 'background'; type: 'DISMISS_ERROR' }
-  | { target: 'background'; type: 'SPEAKER_EVENTS'; events: SpeakerEvent[] };
+  | {
+      target: 'background';
+      type: 'SPEAKER_EVENTS';
+      events: SpeakerEvent[];
+      remoteParticipants?: string[];
+    };
 
 export interface GetStateResponse {
   state: RecorderState;
@@ -96,9 +102,14 @@ export type UiBroadcast =
 
 // ---- Content script --------------------------------------------------------------------------
 
-export type ContentRequest = { type: 'GET_MEETING_INFO' };
+export type ContentRequest = { type: 'GET_MEETING_INFO' } | { type: 'GET_SPEAKER_SNAPSHOT' };
 
-export type AnyMessage = BackgroundRequest | OffscreenEvent | OffscreenCommand | UiBroadcast;
+export type AnyMessage =
+  | BackgroundRequest
+  | OffscreenEvent
+  | OffscreenCommand
+  | UiBroadcast
+  | SpeakerSnapshot;
 
 /** Sends a message and swallows "no receiver" errors (e.g. popup closed). */
 export async function sendSafe<T = unknown>(message: AnyMessage): Promise<T | undefined> {

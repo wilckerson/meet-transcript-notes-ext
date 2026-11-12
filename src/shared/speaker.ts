@@ -111,10 +111,14 @@ export class ChannelEnergyTracker {
 
 /**
  * Resolves the final human-readable speaker label for a segment combining Tier 1 and Tier 2:
- *  - If `speakerSource === 'you'`, always returns `'You'`.
- *  - If `speakerSource === 'remote'`, looks for the Meet participant with the largest
- *    speaking-indicator overlap during the segment's wall-clock window.
- *  - If no DOM speaker name is available (or overlap is too brief), reliably falls back to `'Remote'`.
+ *  1. If `speakerSource === 'you'`, always returns `'You'`.
+ *  2. If `speakerSource === 'remote'`, looks for the Meet participant with the largest
+ *     speaking-indicator overlap during the segment's wall-clock window.
+ *  3. If no active-speaking animation was observed (e.g. Meet tab was in the background so
+ *     Chrome throttled CSS animations), checks `remoteParticipants`: when there is exactly
+ *     1 remote participant in the meeting (1-on-1 call), any remote audio is unambiguously
+ *     that participant.
+ *  4. Otherwise reliably falls back to `'Remote'`.
  */
 export function resolveSpeakerLabel(
   speakerSource: SpeakerSource | undefined,
@@ -122,46 +126,57 @@ export function resolveSpeakerLabel(
   segmentEndSec: number,
   sessionStartedAtMs: number,
   speakerEvents: readonly SpeakerEvent[],
-  minOverlapMs = 250,
+  remoteParticipants: readonly string[] = [],
+  minOverlapMs = 200,
 ): string {
   if (speakerSource === 'you') {
     return 'You';
   }
 
-  if (speakerEvents.length === 0 || sessionStartedAtMs <= 0) {
-    return 'Remote';
-  }
-
-  // Allow a small +-400 ms tolerance around the segment timestamps to account for
+  // Allow a +-600 ms tolerance around the segment timestamps to account for
   // Meet's UI highlight lag vs. Whisper token timestamps.
-  const segStartMs = sessionStartedAtMs + Math.max(0, segmentStartSec) * 1000 - 400;
-  const segEndMs = sessionStartedAtMs + Math.max(segmentStartSec + 0.3, segmentEndSec) * 1000 + 400;
+  if (speakerEvents.length > 0 && sessionStartedAtMs > 0) {
+    const segStartMs = sessionStartedAtMs + Math.max(0, segmentStartSec) * 1000 - 600;
+    const segEndMs =
+      sessionStartedAtMs + Math.max(segmentStartSec + 0.3, segmentEndSec) * 1000 + 600;
 
-  const overlapBySpeaker = new Map<string, number>();
+    const overlapBySpeaker = new Map<string, number>();
 
-  for (const evt of speakerEvents) {
-    const name = evt.name.trim();
-    if (!name || isSelfLabel(name)) continue;
-    const overlapStart = Math.max(segStartMs, evt.startMs);
-    const overlapEnd = Math.min(segEndMs, evt.endMs);
-    const overlap = overlapEnd - overlapStart;
-    if (overlap > 0) {
-      overlapBySpeaker.set(name, (overlapBySpeaker.get(name) ?? 0) + overlap);
+    for (const evt of speakerEvents) {
+      const name = evt.name.trim();
+      if (!name || isSelfLabel(name)) continue;
+      const overlapStart = Math.max(segStartMs, evt.startMs);
+      const overlapEnd = Math.min(segEndMs, evt.endMs);
+      const overlap = overlapEnd - overlapStart;
+      if (overlap > 0) {
+        overlapBySpeaker.set(name, (overlapBySpeaker.get(name) ?? 0) + overlap);
+      }
+    }
+
+    let bestName: string | undefined;
+    let bestOverlap = 0;
+    for (const [name, total] of overlapBySpeaker) {
+      if (total > bestOverlap) {
+        bestOverlap = total;
+        bestName = name;
+      }
+    }
+
+    if (bestName && bestOverlap >= minOverlapMs) {
+      return bestName;
     }
   }
 
-  let bestName: string | undefined;
-  let bestOverlap = 0;
-  for (const [name, total] of overlapBySpeaker) {
-    if (total > bestOverlap) {
-      bestOverlap = total;
-      bestName = name;
-    }
+  // 1-on-1 call deterministic attribution: if there is exactly 1 remote participant in the
+  // call, any remote audio (Input 0) belongs to that participant even when Meet's tab is
+  // backgrounded or its voice meter animation isn't running.
+  const validRemotes = remoteParticipants
+    .map((n) => n.trim())
+    .filter((n) => n.length > 0 && !isSelfLabel(n));
+  if (validRemotes.length === 1) {
+    return validRemotes[0];
   }
 
-  if (bestName && bestOverlap >= minOverlapMs) {
-    return bestName;
-  }
   return 'Remote';
 }
 
@@ -175,7 +190,11 @@ export function isSelfLabel(name: string): boolean {
     n === 'tú' ||
     n === 'vous' ||
     n === 'du' ||
+    n === 'ich' ||
+    n === 'io' ||
     n.endsWith('(you)') ||
-    n.endsWith('(você)')
+    n.endsWith('(você)') ||
+    n.endsWith('(tu)') ||
+    n.endsWith('(tú)')
   );
 }

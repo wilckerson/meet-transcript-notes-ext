@@ -1,5 +1,5 @@
 /// <reference types="vitest/config" />
-import { defineConfig, type Plugin } from 'vite';
+import { defineConfig, build as viteBuild, type Plugin } from 'vite';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
@@ -10,16 +10,21 @@ import {
 const root = resolve(__dirname, 'src');
 
 /**
- * Emits manifest.json, the AudioWorklet script, and the ONNX Runtime .wasm/.mjs files into the bundle.
- * The ORT and worklet files are bundled as `'self'` extension assets because MV3's CSP
- * (`script-src 'self' 'wasm-unsafe-eval'`) forbids remotely hosted code and `blob:` script URLs.
+ * Emits manifest.json, the AudioWorklet script, the self-contained classic content script,
+ * and the ONNX Runtime .wasm/.mjs files into the bundle.
+ *
+ * Why `meet.content.ts` is bundled as an IIFE:
+ * Chrome MV3 executes `content_scripts` as classic scripts (not ES modules). If Rollup
+ * code-splits shared imports into `assets/*.js`, Chrome throws
+ * `Uncaught SyntaxError: Cannot use import statement outside a module` when injecting
+ * `meet.content.js` into `https://meet.google.com/*`.
  */
 function extensionAssets(): Plugin {
   const ortDir = resolve(__dirname, 'node_modules/onnxruntime-web/dist');
   const ortFiles = ['ort-wasm-simd-threaded.jsep.wasm', 'ort-wasm-simd-threaded.jsep.mjs'];
   return {
     name: 'extension-assets',
-    generateBundle() {
+    async generateBundle() {
       this.emitFile({
         type: 'asset',
         fileName: 'manifest.json',
@@ -33,12 +38,42 @@ function extensionAssets(): Plugin {
       for (const f of ortFiles) {
         this.emitFile({ type: 'asset', fileName: `ort/${f}`, source: readFileSync(resolve(ortDir, f)) });
       }
+
+      // Bundle meet.content.ts as a single self-contained IIFE with zero `import` statements.
+      const contentBundle = await viteBuild({
+        configFile: false,
+        logLevel: 'silent',
+        build: {
+          write: false,
+          target: 'chrome116',
+          lib: {
+            entry: resolve(root, 'content/meet.content.ts'),
+            name: 'MeetTranscriptContent',
+            formats: ['iife'],
+            fileName: () => 'meet.content.js',
+          },
+        },
+      });
+      const outputs = Array.isArray(contentBundle) ? contentBundle : [contentBundle];
+      for (const out of outputs) {
+        if ('output' in out) {
+          for (const chunk of out.output) {
+            if (chunk.type === 'chunk' && chunk.fileName === 'meet.content.js') {
+              this.emitFile({
+                type: 'asset',
+                fileName: 'meet.content.js',
+                source: chunk.code,
+              });
+            }
+          }
+        }
+      }
     },
   };
 }
 
 /** Entries whose output file name must be stable because manifest.json references them. */
-const FIXED_NAME_ENTRIES = new Set(['background', 'meet.content']);
+const FIXED_NAME_ENTRIES = new Set(['background']);
 
 export default defineConfig(({ mode }) => ({
   root,
@@ -69,7 +104,6 @@ export default defineConfig(({ mode }) => ({
         options: resolve(root, 'options/options.html'),
         offscreen: resolve(root, 'offscreen/offscreen.html'),
         background: resolve(root, 'background/index.ts'),
-        'meet.content': resolve(root, 'content/meet.content.ts'),
       },
       output: {
         entryFileNames: (chunk) =>

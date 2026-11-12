@@ -44,6 +44,7 @@ import {
   type RecorderState,
   type SessionMeta,
   type SpeakerEvent,
+  type SpeakerSnapshot,
 } from '../shared/types';
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
@@ -53,6 +54,8 @@ let state: RecorderState = { ...DEFAULT_STATE };
 let stateReadyPromise: Promise<void> | null = null;
 /** Active-speaker timeline reported by the Meet content script during the current session. */
 let speakerTimeline: SpeakerEvent[] = [];
+/** Known non-self remote participants currently in the Meet call. */
+let currentRemoteParticipants: string[] = [];
 
 async function ensureStateInitialized(): Promise<void> {
   if (!stateReadyPromise) {
@@ -168,6 +171,7 @@ async function handleStart(
   await putSession(sessionMeta);
   await pushRecentLanguage(language);
   speakerTimeline = [];
+  currentRemoteParticipants = [];
 
   await setState({
     status: 'starting',
@@ -182,6 +186,8 @@ async function handleStart(
     lagging: false,
     error: undefined,
     errorAction: undefined,
+    detectedParticipants: [],
+    activeDomSpeakers: [],
   });
 
   try {
@@ -264,6 +270,7 @@ async function finalizeAndSaveSession(sessionId: string): Promise<void> {
   // Release model/worker/GPU memory and close the offscreen document (PLAN §14.4).
   await releaseAndCloseOffscreenDocument();
   speakerTimeline = [];
+  currentRemoteParticipants = [];
 
   // Clear active session state immediately so the popup preview resets right away,
   // even while the user is choosing a file location in the Save As dialog.
@@ -358,6 +365,41 @@ async function handleOffscreenEvent(evt: OffscreenEvent): Promise<void> {
     case 'OFFSCREEN_SEGMENTS': {
       if (state.sessionId !== evt.sessionId) return;
       const sessionStartedAt = state.startedAt ?? Date.now();
+
+      // If any segment is from the remote tab channel, actively pull a fresh DOM snapshot
+      // from the Meet tab as well. This ensures we have up-to-date participant names even
+      // when the Meet tab was in the background (where Chrome throttles setInterval to 1/min).
+      if (
+        state.tabId &&
+        evt.segments.some((s) => s.speakerSource !== 'you' && !s.speaker)
+      ) {
+        try {
+          const snap = (await chrome.tabs.sendMessage(state.tabId, {
+            type: 'GET_SPEAKER_SNAPSHOT',
+          })) as SpeakerSnapshot | undefined;
+          if (snap) {
+            if (Array.isArray(snap.remoteParticipants)) {
+              currentRemoteParticipants = snap.remoteParticipants;
+            }
+            if (Array.isArray(snap.activeSpeakers)) {
+              for (const name of snap.activeSpeakers) {
+                speakerTimeline.push({
+                  name,
+                  startMs: snap.timestampMs - 2000,
+                  endMs: snap.timestampMs + 500,
+                });
+              }
+            }
+            await setState({
+              detectedParticipants: currentRemoteParticipants,
+              activeDomSpeakers: snap.activeSpeakers ?? [],
+            });
+          }
+        } catch {
+          // Content script may be unreachable; fallback to cached timeline/Remote.
+        }
+      }
+
       const labeled = evt.segments.map((seg) => ({
         ...seg,
         speaker:
@@ -368,6 +410,7 @@ async function handleOffscreenEvent(evt: OffscreenEvent): Promise<void> {
             seg.end,
             sessionStartedAt,
             speakerTimeline,
+            currentRemoteParticipants,
           ),
       }));
       const saved = await addSegments(labeled);
@@ -514,6 +557,12 @@ chrome.runtime.onMessage.addListener(
             const cutoff = Date.now() - SPEAKER_EVENT_RETENTION_MS;
             speakerTimeline = speakerTimeline.filter((e) => e.endMs >= cutoff);
             speakerTimeline.push(...msg.events);
+            if (Array.isArray(msg.remoteParticipants)) {
+              currentRemoteParticipants = msg.remoteParticipants;
+              await setState({
+                detectedParticipants: currentRemoteParticipants,
+              });
+            }
           }
           sendResponse({ ok: true } satisfies OkResponse);
           return;

@@ -52,6 +52,7 @@ import {
 } from '../src/shared/integrity';
 import { decodeWavPcm16, encodeWavPcm16 } from '../src/shared/wav';
 import { ChannelEnergyTracker, resolveSpeakerLabel } from '../src/shared/speaker';
+import { parseParticipantTile, scanMeetDom } from '../src/content/meet.content';
 import type { Segment, SessionMeta } from '../src/shared/types';
 
 function makeSpeechFrame(samples = 1600, amplitude = 0.25): Float32Array {
@@ -432,6 +433,16 @@ describe('Tier 1 + Tier 2 Speaker Attribution (PLAN §8, §9)', () => {
 
     // Empty DOM events list -> falls back to "Remote"
     expect(resolveSpeakerLabel('remote', 1.2, 4.5, sessionStartMs, [])).toBe('Remote');
+
+    // 1-on-1 call (1 remote participant in the Meet call): even when Meet tab is in the
+    // background and no active-speaker CSS animation fired, remote audio is deterministically
+    // attributed to that single remote participant ("João").
+    expect(resolveSpeakerLabel('remote', 12.0, 15.0, sessionStartMs, [], ['João'])).toBe('João');
+
+    // Group call (2+ remote participants) with no active-speaker animation -> falls back to "Remote"
+    expect(
+      resolveSpeakerLabel('remote', 12.0, 15.0, sessionStartMs, [], ['João', 'Maria Silva']),
+    ).toBe('Remote');
   });
 
   it('includes *(Speaker: ...)* in Markdown export when present', () => {
@@ -468,5 +479,39 @@ describe('Tier 1 + Tier 2 Speaker Attribution (PLAN §8, §9)', () => {
     const md = buildMarkdownTranscript(session, segments, 'hms');
     expect(md).toContain('**[00:00:03]** *(Speaker: You)* Bom dia pessoal!');
     expect(md).toContain('**[00:00:09]** *(Speaker: Maria)* Bom dia, tudo ótimo.');
+  });
+
+  it('extracts "João" cleanly from the actual Google Meet tile DOM structure', () => {
+    // Minimal DOM stub for the exact Google Meet HTML structure (`div[jscontroller="W156lc"].FKJK2b`)
+    const fakeTile = {
+      getAttribute: (attr: string) => (attr === 'data-self-name' ? null : null),
+      hasAttribute: (attr: string) => attr === 'jscontroller',
+      querySelectorAll: (selector: string) => {
+        if (selector.includes('.XEazBc [jsslot] span.notranslate')) {
+          return [
+            {
+              getAttribute: () => null,
+              dataset: {},
+              textContent: 'João',
+            },
+          ];
+        }
+        return [];
+      },
+      querySelector: (selector: string) => {
+        if (selector === '[data-ssrc]') return {}; // Remote WebRTC video stream
+        return null;
+      },
+    } as unknown as Element;
+
+    const parsed = parseParticipantTile(fakeTile, true);
+    expect(parsed).toEqual({ name: 'João', isSelf: false });
+
+    // Also verify scanMeetDom over a parent node containing that tile
+    const fakeRoot = {
+      querySelectorAll: () => [fakeTile],
+    } as unknown as ParentNode;
+    const snap = scanMeetDom(fakeRoot);
+    expect(snap.remoteParticipants).toEqual(['João']);
   });
 });

@@ -30,6 +30,7 @@ import {
   type RecorderState,
   type Segment,
   type Settings,
+  type SpeakerSnapshot,
 } from '../shared/types';
 
 function PopupApp() {
@@ -39,6 +40,12 @@ function PopupApp() {
   const [modelInfo, setModelInfo] = useState<ModelInfo | undefined>(undefined);
   const [micGranted, setMicGranted] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<{ id?: number; url?: string; title?: string }>({});
+  const [domStatus, setDomStatus] = useState<{
+    connected: boolean;
+    remoteParticipants: string[];
+    activeSpeakers: string[];
+    totalTiles: number;
+  }>({ connected: false, remoteParticipants: [], activeSpeakers: [], totalTiles: 0 });
   const [now, setNow] = useState<number>(Date.now());
   const [busy, setBusy] = useState<boolean>(false);
   const [localError, setLocalError] = useState<string | undefined>(undefined);
@@ -106,6 +113,45 @@ function PopupApp() {
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, [isActive]);
+
+  // Poll the Meet content script for live participant/speaker DOM detection status while popup is open.
+  useEffect(() => {
+    if (!isMeetTab || !activeTab.id) return;
+    const tabId = activeTab.id;
+    let cancelled = false;
+
+    const pollDom = async () => {
+      try {
+        const snap = (await chrome.tabs.sendMessage(tabId, {
+          type: 'GET_SPEAKER_SNAPSHOT',
+        })) as SpeakerSnapshot | undefined;
+        if (!cancelled && snap) {
+          setDomStatus({
+            connected: true,
+            remoteParticipants: snap.remoteParticipants ?? [],
+            activeSpeakers: snap.activeSpeakers ?? [],
+            totalTiles: snap.totalTiles ?? 0,
+          });
+        }
+      } catch {
+        if (!cancelled) {
+          setDomStatus({
+            connected: false,
+            remoteParticipants: [],
+            activeSpeakers: [],
+            totalTiles: 0,
+          });
+        }
+      }
+    };
+
+    void pollDom();
+    const timer = setInterval(() => void pollDom(), 1500);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [isMeetTab, activeTab.id]);
 
   // Auto-scroll live transcript preview as new segments arrive.
   useEffect(() => {
@@ -244,6 +290,38 @@ function PopupApp() {
           </span>
         )}
       </div>
+
+      {/* Meet DOM speaker-detection status badge */}
+      {isMeetTab && (
+        <div class="popup-meta">
+          {!domStatus.connected ? (
+            <span
+              class="badge badge-warn"
+              title="Refresh the Google Meet tab (Cmd+R) so the speaker-name content script can attach."
+            >
+              Names: Refresh Meet tab (fallback: You/Remote)
+            </span>
+          ) : domStatus.remoteParticipants.length > 0 ? (
+            <span
+              class="badge badge-ok"
+              title={`Detected participants in Meet DOM: ${domStatus.remoteParticipants.join(', ')}`}
+            >
+              Names detected: {domStatus.remoteParticipants.join(', ')}
+              {domStatus.activeSpeakers.length > 0
+                ? ` (speaking: ${domStatus.activeSpeakers.join(', ')})`
+                : ''}
+            </span>
+          ) : (
+            <span
+              class="badge"
+              title={`Content script connected (${domStatus.totalTiles} tile${domStatus.totalTiles === 1 ? '' : 's'} in DOM). Waiting for remote participants.`}
+            >
+              Names: DOM ready ({domStatus.totalTiles} tile
+              {domStatus.totalTiles === 1 ? '' : 's'}, You only)
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Hardware resource warning summary from setup (PLAN §14.5) */}
       {modelInfo?.resourceSummary && !isActive && (
