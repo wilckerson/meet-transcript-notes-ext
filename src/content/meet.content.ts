@@ -9,16 +9,17 @@
  *       across Google Meet's DOM.
  *     - Extracts participant display names from `.XEazBc [jsslot] span.notranslate` /
  *       `.XEazBc [data-tooltip-id]` (avoiding duplicate `[role="tooltip"]` nodes).
- *     - Identifies the local user's self tile via `data-use-raw-local-presentation-stream="true"`
- *       or explicit `(You)` / `(Você)` labels.
+ *     - Identifies the local user's self tile reliably by checking for self-only controls
+ *       inside the tile (`[jscontroller="FgUb3"]` "Planos de fundo e efeitos" / "Backgrounds",
+ *       `[jscontroller="aFDtTb"]` "Reenquadrar" / "Reframe", `[jscontroller="qBhjZe"]`,
+ *       or `visual_effects` / `frame_person` symbols) as well as `(You)` / `(Você)` labels.
  *     - Detects active speaking via class/style mutations on `.IisKdb` / `.DYfzY` voice meters
  *       (`jscontroller="tae9tc"`, `jscontroller="YQvg8b"`, `.UBNDXc`, `.HPxjXe`, `.DwvCqe`).
- *     - Also reports all visible remote participant names (`remoteParticipants`) so 1-on-1 calls
- *       deterministically attribute remote audio even when a participant joins muted or when
- *       the Meet tab is in the background.
+ *     - Reports both `selfName` (for labeling microphone audio with the user's real name) and
+ *       `remoteParticipants` (for labeling remote tab audio).
  */
 import { sendSafe, type ContentRequest } from '../shared/messages';
-import { isSelfLabel } from '../shared/speaker';
+import { isSelfLabel, stripSelfSuffix } from '../shared/speaker';
 import type { MeetingInfo, SpeakerEvent, SpeakerSnapshot } from '../shared/types';
 
 /**
@@ -67,6 +68,20 @@ export const MEET_SELECTORS = {
   ].join(', '),
 
   voiceMeterBars: '.UBNDXc, .HPxjXe, .DwvCqe',
+
+  /**
+   * Elements that Google Meet renders EXCLUSIVELY inside the local user's own self-preview tile:
+   *  - `[jscontroller="FgUb3"]` ("Planos de fundo e efeitos" / "Backgrounds and effects" button)
+   *  - `[jscontroller="aFDtTb"]` ("Reenquadrar" / "Reframe" button)
+   *  - `[jscontroller="qBhjZe"]` ("As pessoas ainda podem ver seu vídeo completo" banner)
+   *  - `[jsname="nsKqzb"]` (Reframe button jsname)
+   */
+  selfOnlyMarkers: [
+    '[jscontroller="FgUb3"]',
+    '[jscontroller="aFDtTb"]',
+    '[jscontroller="qBhjZe"]',
+    '[jsname="nsKqzb"]',
+  ].join(', '),
 };
 
 /** Common Google Meet UI strings or Material icon ligatures that are NOT participant names. */
@@ -111,6 +126,7 @@ const IGNORED_UI_LABELS = new Set([
   'remove from the call',
   "don't watch",
   'watch',
+  'reenquadrar',
   'desativar som',
   'ativar som',
   'fixar',
@@ -156,8 +172,9 @@ function extractMeetingInfo(): MeetingInfo {
 }
 
 /**
- * Deduplicates nested tile elements so if a tile matches both `[jscontroller="W156lc"]`
- * and an inner `[data-participant-id]`, we only process the outermost tile container.
+ * Deduplicates nested tile elements so if a tile matches both `[data-participant-id]`
+ * (`div.oZRSLe`) and an inner `[jscontroller="W156lc"]` (`div.FKJK2b`), we only process
+ * the outermost tile container.
  */
 function queryTopLevelTiles(root: ParentNode = document): Element[] {
   const raw = Array.from(root.querySelectorAll(MEET_SELECTORS.participantTile));
@@ -165,18 +182,34 @@ function queryTopLevelTiles(root: ParentNode = document): Element[] {
 }
 
 /**
+ * Checks whether a participant tile contains controls that Google Meet renders
+ * exclusively on the local user's own self-preview tile ("Reframe" / "Reenquadrar"
+ * and "Backgrounds and effects" / "Planos de fundo e efeitos").
+ */
+export function hasSelfOnlyControls(tile: Element): boolean {
+  try {
+    if (tile.querySelector(MEET_SELECTORS.selfOnlyMarkers) !== null) {
+      return true;
+    }
+    const symbols = tile.querySelectorAll('i.google-symbols, i.google-material-icons');
+    for (const sym of symbols) {
+      const ligature = (sym.textContent ?? '').trim();
+      if (ligature === 'visual_effects' || ligature === 'frame_person') {
+        return true;
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return false;
+}
+
+/**
  * Extracts a participant's clean name and whether the tile belongs to the local user.
- *
- * Note on `data-use-raw-local-presentation-stream`:
- * Google Meet sets this attribute on all tiles in some layouts, so we determine whether
- * a tile is the local user by checking:
- *  1. Whether its name label is `(You)` / `(Você)` (`isSelfLabel`), OR
- *  2. Whether the tile lacks a remote WebRTC `data-ssrc` stream AND there are other tiles
- *     with `data-ssrc` in the call.
  */
 export function parseParticipantTile(
   tile: Element,
-  hasAnyRemoteSsrcTile: boolean,
+  hasAnyRemoteSsrcTile = false,
 ): { name: string; isSelf: boolean } | null {
   try {
     const candidates: string[] = [];
@@ -197,7 +230,7 @@ export function parseParticipantTile(
       if (tooltip?.textContent) candidates.push(tooltip.textContent);
     }
 
-    let isSelf = false;
+    let isSelf = hasSelfOnlyControls(tile);
     let bestName: string | null = null;
 
     for (const raw of candidates) {
@@ -206,14 +239,12 @@ export function parseParticipantTile(
       if (isSelfLabel(trimmed)) {
         isSelf = true;
       }
-      const cleaned = cleanParticipantName(trimmed);
+      const cleaned = cleanParticipantName(stripSelfSuffix(trimmed));
       if (cleaned && !isSelfLabel(cleaned)) {
         if (!bestName) bestName = cleaned;
       }
     }
 
-    // Remote participant video streams in Meet carry a numeric `data-ssrc` on `.p2hjYe[data-ssrc]`.
-    // If other tiles have `data-ssrc` and this tile does NOT, it is the local user's self preview.
     const hasSsrc = tile.querySelector('[data-ssrc]') !== null || tile.hasAttribute('data-ssrc');
     if (!hasSsrc && hasAnyRemoteSsrcTile) {
       isSelf = true;
@@ -243,11 +274,6 @@ export function cleanParticipantName(raw: string): string | null {
 
 // ---- Track voice-meter class/style changes per tile -----------------------------------------
 
-/**
- * In Google Meet, `.IisKdb` (`jscontroller="tae9tc"`) and `.DYfzY` (`jscontroller="YQvg8b"`)
- * hold the idle class `Oaajhc` when silent, and swap classes / update inline bar styles on
- * `.UBNDXc`, `.HPxjXe`, `.DwvCqe` when the participant is speaking.
- */
 const tileLastVoiceMutationMs = new WeakMap<Element, number>();
 const meterBaselineClass = new WeakMap<Element, string>();
 
@@ -296,28 +322,21 @@ function setupMutationTracker(): void {
  */
 function isTileCurrentlySpeaking(tile: Element, now: number): boolean {
   try {
-    // 1. Recent mutation on the tile's `.IisKdb` / `.DYfzY` voice meter or its 3 bars
     const lastMut = tileLastVoiceMutationMs.get(tile);
     if (lastMut && now - lastMut <= 500) {
       return true;
     }
 
-    // 2. Check `.IisKdb` / `.DYfzY` class list changes (Meet removes `Oaajhc` when active)
     const meters = tile.querySelectorAll<HTMLElement>(MEET_SELECTORS.voiceMeterContainers);
     for (const meter of meters) {
       const cls = meter.className || '';
       if (!meterBaselineClass.has(meter)) {
         meterBaselineClass.set(meter, cls);
       }
-      // When silent/idle, Meet includes `Oaajhc` on both `DYfzY` and `IisKdb`.
-      if (
-        (cls.includes('IisKdb') || cls.includes('DYfzY')) &&
-        !cls.includes('Oaajhc')
-      ) {
+      if ((cls.includes('IisKdb') || cls.includes('DYfzY')) && !cls.includes('Oaajhc')) {
         return true;
       }
 
-      // 3. Check the 3 bar children (`.UBNDXc`, `.HPxjXe`, `.DwvCqe`) for active height/scale
       const bars = meter.querySelectorAll<HTMLElement>(MEET_SELECTORS.voiceMeterBars);
       for (const bar of bars) {
         const style = window.getComputedStyle(bar);
@@ -347,20 +366,52 @@ const FLUSH_INTERVAL_MS = 1500;
 const ongoingSpans = new Map<string, { startMs: number; lastSeenMs: number }>();
 const completedEvents: SpeakerEvent[] = [];
 let latestRemoteParticipants: string[] = [];
+let latestSelfName: string | undefined;
+
+/**
+ * Attempts to read the local user's real display name from Google Meet's page DOM
+ * even when the self video tile only displays `"You"` / `"Você"`.
+ */
+function findLocalUserNameFromPage(root: ParentNode = document): string | undefined {
+  try {
+    const selfEls = root.querySelectorAll<HTMLElement>('[data-self-name]');
+    for (const el of selfEls) {
+      const attr = stripSelfSuffix(el.getAttribute('data-self-name') ?? '');
+      const cleaned = cleanParticipantName(attr);
+      if (cleaned && !isSelfLabel(cleaned)) {
+        return cleaned;
+      }
+    }
+
+    const textEls = root.querySelectorAll<HTMLElement>('.zWGUib, .cS7aqe, .XEazBc, [dir="auto"]');
+    for (const el of textEls) {
+      const txt = (el.textContent ?? '').trim();
+      if (!txt) continue;
+      if (/\((?:you|você|tu|tú)\)/i.test(txt)) {
+        const stripped = cleanParticipantName(stripSelfSuffix(txt));
+        if (stripped && !isSelfLabel(stripped)) {
+          return stripped;
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return undefined;
+}
 
 export function scanMeetDom(root: ParentNode = document): SpeakerSnapshot {
   const now = Date.now();
   const activeSpeakers = new Set<string>();
   const remoteParticipants = new Set<string>();
+  let detectedSelfName: string | undefined;
 
   try {
     const tiles = queryTopLevelTiles(root);
     const hasAnyRemoteSsrcTile = tiles.some(
       (t) =>
         (t.querySelector('[data-ssrc]') !== null || t.hasAttribute('data-ssrc')) &&
-        !Array.from(t.querySelectorAll(MEET_SELECTORS.participantName)).some((el) =>
-          isSelfLabel(el.textContent ?? ''),
-        ),
+        !hasSelfOnlyControls(t),
     );
 
     const parsedTiles: Array<{ tile: Element; name: string; isSelf: boolean }> = [];
@@ -371,19 +422,29 @@ export function scanMeetDom(root: ParentNode = document): SpeakerSnapshot {
       }
     }
 
-    // If multiple tiles share a participant name or none were explicitly marked self,
-    // collect all non-self names.
     for (const item of parsedTiles) {
-      if (item.isSelf) continue;
+      if (item.isSelf) {
+        if (item.name && !isSelfLabel(item.name)) {
+          detectedSelfName = item.name;
+        }
+        continue;
+      }
       remoteParticipants.add(item.name);
       if (isTileCurrentlySpeaking(item.tile, now)) {
         activeSpeakers.add(item.name);
       }
     }
+
+    if (!detectedSelfName) {
+      detectedSelfName = findLocalUserNameFromPage(root);
+    }
   } catch {
     // Never disrupt the host page
   }
 
+  if (detectedSelfName) {
+    latestSelfName = detectedSelfName;
+  }
   latestRemoteParticipants = Array.from(remoteParticipants);
 
   for (const name of activeSpeakers) {
@@ -408,6 +469,7 @@ export function scanMeetDom(root: ParentNode = document): SpeakerSnapshot {
 
   return {
     timestampMs: now,
+    selfName: latestSelfName,
     activeSpeakers: Array.from(activeSpeakers),
     remoteParticipants: latestRemoteParticipants,
     totalTiles: queryTopLevelTiles(root).length,
@@ -428,12 +490,13 @@ function flushSpeakerEvents(): void {
       });
     }
 
-    if (batch.length > 0 || latestRemoteParticipants.length > 0) {
+    if (batch.length > 0 || latestRemoteParticipants.length > 0 || latestSelfName) {
       void sendSafe({
         target: 'background',
         type: 'SPEAKER_EVENTS',
         events: batch,
         remoteParticipants: latestRemoteParticipants,
+        selfName: latestSelfName,
       });
     }
   } catch {

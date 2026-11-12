@@ -42,6 +42,7 @@ function PopupApp() {
   const [activeTab, setActiveTab] = useState<{ id?: number; url?: string; title?: string }>({});
   const [domStatus, setDomStatus] = useState<{
     connected: boolean;
+    selfName?: string;
     remoteParticipants: string[];
     activeSpeakers: string[];
     totalTiles: number;
@@ -128,6 +129,7 @@ function PopupApp() {
         if (!cancelled && snap) {
           setDomStatus({
             connected: true,
+            selfName: snap.selfName,
             remoteParticipants: snap.remoteParticipants ?? [],
             activeSpeakers: snap.activeSpeakers ?? [],
             totalTiles: snap.totalTiles ?? 0,
@@ -301,12 +303,18 @@ function PopupApp() {
             >
               Names: Refresh Meet tab (fallback: You/Remote)
             </span>
-          ) : domStatus.remoteParticipants.length > 0 ? (
+          ) : domStatus.remoteParticipants.length > 0 || domStatus.selfName ? (
             <span
               class="badge badge-ok"
-              title={`Detected participants in Meet DOM: ${domStatus.remoteParticipants.join(', ')}`}
+              title={`Detected participants in Meet DOM: ${[domStatus.selfName ? `${domStatus.selfName} (You)` : null, ...domStatus.remoteParticipants].filter(Boolean).join(', ')}`}
             >
-              Names detected: {domStatus.remoteParticipants.join(', ')}
+              Names detected:{' '}
+              {[
+                domStatus.selfName ? `${domStatus.selfName} (You)` : null,
+                ...domStatus.remoteParticipants,
+              ]
+                .filter(Boolean)
+                .join(', ')}
               {domStatus.activeSpeakers.length > 0
                 ? ` (speaking: ${domStatus.activeSpeakers.join(', ')})`
                 : ''}
@@ -314,7 +322,7 @@ function PopupApp() {
           ) : (
             <span
               class="badge"
-              title={`Content script connected (${domStatus.totalTiles} tile${domStatus.totalTiles === 1 ? '' : 's'} in DOM). Waiting for remote participants.`}
+              title={`Content script connected (${domStatus.totalTiles} tile${domStatus.totalTiles === 1 ? '' : 's'} in DOM). Waiting for participant names.`}
             >
               Names: DOM ready ({domStatus.totalTiles} tile
               {domStatus.totalTiles === 1 ? '' : 's'}, You only)

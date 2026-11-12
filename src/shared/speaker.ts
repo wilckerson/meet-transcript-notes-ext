@@ -111,7 +111,8 @@ export class ChannelEnergyTracker {
 
 /**
  * Resolves the final human-readable speaker label for a segment combining Tier 1 and Tier 2:
- *  1. If `speakerSource === 'you'`, always returns `'You'`.
+ *  1. If `speakerSource === 'you'`, returns the local user's real display name (`selfName`,
+ *     e.g. `'Wilckerson'`) when detected from Meet's DOM, or falls back to `'You'`.
  *  2. If `speakerSource === 'remote'`, looks for the Meet participant with the largest
  *     speaking-indicator overlap during the segment's wall-clock window.
  *  3. If no active-speaking animation was observed (e.g. Meet tab was in the background so
@@ -127,10 +128,12 @@ export function resolveSpeakerLabel(
   sessionStartedAtMs: number,
   speakerEvents: readonly SpeakerEvent[],
   remoteParticipants: readonly string[] = [],
+  selfName?: string,
   minOverlapMs = 200,
 ): string {
   if (speakerSource === 'you') {
-    return 'You';
+    const cleanSelf = selfName ? stripSelfSuffix(selfName) : '';
+    return cleanSelf && !isSelfLabel(cleanSelf) ? cleanSelf : 'You';
   }
 
   // Allow a +-600 ms tolerance around the segment timestamps to account for
@@ -180,7 +183,18 @@ export function resolveSpeakerLabel(
   return 'Remote';
 }
 
-/** Filters out Meet's self-tile labels in English, Portuguese, Spanish, etc. */
+/**
+ * Strips trailing `(You)` / `(Você)` suffixes from a display name, e.g.
+ * `"Wilckerson Ganda (You)"` -> `"Wilckerson Ganda"`.
+ */
+export function stripSelfSuffix(name: string): string {
+  return name
+    .trim()
+    .replace(/\s*\((?:you|você|tu|tú|vous|du|ich|io)\)\s*$/i, '')
+    .trim();
+}
+
+/** Filters out Meet's generic self-tile labels in English, Portuguese, Spanish, etc. */
 export function isSelfLabel(name: string): boolean {
   const n = name.trim().toLowerCase();
   return (

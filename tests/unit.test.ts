@@ -422,8 +422,11 @@ describe('Tier 1 + Tier 2 Speaker Attribution (PLAN §8, §9)', () => {
       { name: 'João', startMs: sessionStartMs + 6000, endMs: sessionStartMs + 9000 },
     ];
 
-    // Mic channel is always labeled "You" even if a remote tile flickered
+    // Mic channel is labeled "You" when no selfName is available, or the user's real name when detected
     expect(resolveSpeakerLabel('you', 1.5, 4.0, sessionStartMs, events)).toBe('You');
+    expect(
+      resolveSpeakerLabel('you', 1.5, 4.0, sessionStartMs, events, [], 'Wilckerson Ganda (Você)'),
+    ).toBe('Wilckerson Ganda');
 
     // Remote segment overlapping Maria's active-speaker window -> "Maria Silva"
     expect(resolveSpeakerLabel('remote', 1.2, 4.5, sessionStartMs, events)).toBe('Maria Silva');
@@ -502,16 +505,40 @@ describe('Tier 1 + Tier 2 Speaker Attribution (PLAN §8, §9)', () => {
         if (selector === '[data-ssrc]') return {}; // Remote WebRTC video stream
         return null;
       },
+      contains: () => false,
     } as unknown as Element;
 
     const parsed = parseParticipantTile(fakeTile, true);
     expect(parsed).toEqual({ name: 'João', isSelf: false });
 
-    // Also verify scanMeetDom over a parent node containing that tile
+    // Local user's self tile (`div.oZRSLe[data-participant-id]` containing `Wilckerson Ganda da Silva`
+    // AND self-only controls `[jscontroller="FgUb3"]` / `[jscontroller="aFDtTb"]` plus `[data-ssrc]`)
+    const fakeSelfTile = {
+      getAttribute: () => null,
+      hasAttribute: (attr: string) => attr === 'data-participant-id',
+      querySelectorAll: (selector: string) => {
+        if (selector.includes('.XEazBc [jsslot] span.notranslate')) {
+          return [{ getAttribute: () => null, dataset: {}, textContent: 'Wilckerson Ganda da Silva' }];
+        }
+        return [];
+      },
+      querySelector: (selector: string) => {
+        if (selector === '[data-ssrc]') return {};
+        if (selector.includes('[jscontroller="FgUb3"]')) return {}; // Self-only "Planos de fundo e efeitos" button
+        return null;
+      },
+      contains: () => false,
+    } as unknown as Element;
+
+    const parsedSelf = parseParticipantTile(fakeSelfTile, true);
+    expect(parsedSelf).toEqual({ name: 'Wilckerson Ganda da Silva', isSelf: true });
+
+    // Also verify scanMeetDom over a parent node containing both tiles
     const fakeRoot = {
-      querySelectorAll: () => [fakeTile],
+      querySelectorAll: () => [fakeSelfTile, fakeTile],
     } as unknown as ParentNode;
     const snap = scanMeetDom(fakeRoot);
+    expect(snap.selfName).toBe('Wilckerson Ganda da Silva');
     expect(snap.remoteParticipants).toEqual(['João']);
   });
 });

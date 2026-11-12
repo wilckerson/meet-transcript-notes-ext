@@ -56,6 +56,8 @@ let stateReadyPromise: Promise<void> | null = null;
 let speakerTimeline: SpeakerEvent[] = [];
 /** Known non-self remote participants currently in the Meet call. */
 let currentRemoteParticipants: string[] = [];
+/** Local user's own display name detected in the Meet call (if available). */
+let currentSelfName: string | undefined;
 
 async function ensureStateInitialized(): Promise<void> {
   if (!stateReadyPromise) {
@@ -172,6 +174,7 @@ async function handleStart(
   await pushRecentLanguage(language);
   speakerTimeline = [];
   currentRemoteParticipants = [];
+  currentSelfName = undefined;
 
   await setState({
     status: 'starting',
@@ -271,6 +274,7 @@ async function finalizeAndSaveSession(sessionId: string): Promise<void> {
   await releaseAndCloseOffscreenDocument();
   speakerTimeline = [];
   currentRemoteParticipants = [];
+  currentSelfName = undefined;
 
   // Clear active session state immediately so the popup preview resets right away,
   // even while the user is choosing a file location in the Save As dialog.
@@ -366,18 +370,22 @@ async function handleOffscreenEvent(evt: OffscreenEvent): Promise<void> {
       if (state.sessionId !== evt.sessionId) return;
       const sessionStartedAt = state.startedAt ?? Date.now();
 
-      // If any segment is from the remote tab channel, actively pull a fresh DOM snapshot
-      // from the Meet tab as well. This ensures we have up-to-date participant names even
-      // when the Meet tab was in the background (where Chrome throttles setInterval to 1/min).
+      // Pull a fresh DOM snapshot from the Meet tab whenever we need remote speaker names
+      // or haven't discovered the local user's own display name yet.
       if (
         state.tabId &&
-        evt.segments.some((s) => s.speakerSource !== 'you' && !s.speaker)
+        evt.segments.some(
+          (s) => !s.speaker && (s.speakerSource !== 'you' || !currentSelfName),
+        )
       ) {
         try {
           const snap = (await chrome.tabs.sendMessage(state.tabId, {
             type: 'GET_SPEAKER_SNAPSHOT',
           })) as SpeakerSnapshot | undefined;
           if (snap) {
+            if (snap.selfName) {
+              currentSelfName = snap.selfName;
+            }
             if (Array.isArray(snap.remoteParticipants)) {
               currentRemoteParticipants = snap.remoteParticipants;
             }
@@ -411,6 +419,7 @@ async function handleOffscreenEvent(evt: OffscreenEvent): Promise<void> {
             sessionStartedAt,
             speakerTimeline,
             currentRemoteParticipants,
+            currentSelfName,
           ),
       }));
       const saved = await addSegments(labeled);
@@ -557,6 +566,9 @@ chrome.runtime.onMessage.addListener(
             const cutoff = Date.now() - SPEAKER_EVENT_RETENTION_MS;
             speakerTimeline = speakerTimeline.filter((e) => e.endMs >= cutoff);
             speakerTimeline.push(...msg.events);
+            if (msg.selfName) {
+              currentSelfName = msg.selfName;
+            }
             if (Array.isArray(msg.remoteParticipants)) {
               currentRemoteParticipants = msg.remoteParticipants;
               await setState({

@@ -32,6 +32,7 @@ export type BackgroundRequest =
       type: 'SPEAKER_EVENTS';
       events: SpeakerEvent[];
       remoteParticipants?: string[];
+      selfName?: string;
     };
 
 export interface GetStateResponse {

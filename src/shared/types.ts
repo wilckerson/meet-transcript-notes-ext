@@ -128,6 +128,8 @@ export interface MeetingInfo {
 export interface SpeakerSnapshot {
   /** Wall-clock epoch ms of the snapshot. */
   timestampMs: number;
+  /** Local user's own display name detected in Google Meet's DOM (if available). */
+  selfName?: string;
   /** Non-self participants currently showing an active speaking indicator in Meet's DOM. */
   activeSpeakers: string[];
   /** All non-self remote participants currently visible in the call. */
